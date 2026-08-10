@@ -493,3 +493,59 @@ test('roles with no supplied login are named rather than assumed empty', () => {
 
   assert.deepEqual(uncovered, [{ profileKey: 'profile_20', name: 'Admin' }]);
 });
+
+test('a child-scene view scoped by its parent record is not reported as unscoped', () => {
+  // Knack expresses parent scoping with neither authenticated_user nor
+  // criteria — only the scene's `object` plus a connection_key reveal it.
+  // Counting these as unscoped would fail correct apps and, worse, push real
+  // leaks into allowUnscopedViews alongside the noise.
+  const childScene: KnackSceneDef[] = [
+    {
+      key: 'scene_8',
+      slug: 'recipedetails',
+      parent: 'myrecipes',
+      object: 'object_1',
+      authenticated: true,
+      views: [
+        {
+          key: 'view_27',
+          type: 'table',
+          source: { object: 'object_2', connection_key: 'field_6', relationship_type: 'local' },
+          columns: [{ field: { key: 'field_3' } }],
+        },
+      ],
+    },
+  ];
+
+  const derived = scenesToViews(childScene);
+  const view = derived.scene_8!.views[0]!;
+  assert.equal(view.parentScoped, true);
+  assert.equal(view.authenticatedUser, undefined);
+
+  const plan = planCrawl(childScene);
+  assert.equal(plan.targets[0]!.parentScoped, true);
+  assert.equal(plan.targets[0]!.scoped, true);
+});
+
+test('a top-level view with a connection but no scene record is still unscoped', () => {
+  // The connection_key alone means nothing — it is the scene's `object` that
+  // supplies the record to scope against.
+  const flat: KnackSceneDef[] = [
+    {
+      key: 'scene_2',
+      slug: 'all-things',
+      authenticated: true,
+      views: [
+        {
+          key: 'view_90',
+          type: 'table',
+          source: { object: 'object_2', connection_key: 'field_6' },
+          columns: [{ field: { key: 'field_3' } }],
+        },
+      ],
+    },
+  ];
+
+  assert.equal(scenesToViews(flat).scene_2!.views[0]!.parentScoped, undefined);
+  assert.equal(planCrawl(flat).targets[0]!.scoped, false);
+});

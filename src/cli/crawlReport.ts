@@ -172,24 +172,52 @@ export const renderMarkdown = (report: CrawlReport): string => {
       '`—` means Knack refused (401/403). `·` means not attempted.',
   );
   out.push('');
-  out.push(`| View | Type | Object | Scoped | ${accounts.map((a) => a.label).join(' | ')} |`);
+  out.push(`| View | Type | Object | Scoped by | ${accounts.map((a) => a.label).join(' | ')} |`);
   out.push(`|---|---|---|---|${accounts.map(() => '---:').join('|')}|`);
 
   for (const target of [...plan.targets, ...plan.details]) {
     const cells = accounts.map((a) => cell(a.attempts.find((x) => x.view === target.view)));
+    const scope = target.parentScoped ? 'parent record' : target.scoped ? 'user' : '**nothing**';
     out.push(
       `| \`${target.view}\` ${target.viewName ?? ''} | ${target.viewType} | ` +
-        `\`${target.object}\` | ${target.scoped ? 'yes' : '**no**'} | ${cells.join(' | ')} |`,
+        `\`${target.object}\` | ${scope} | ${cells.join(' | ')} |`,
     );
   }
   out.push('');
+
+  const parentScoped = [...plan.targets, ...plan.details].filter((t) => t.parentScoped);
+  if (parentScoped.length > 0) {
+    out.push(
+      `**${parentScoped.length} view${parentScoped.length === 1 ? ' is' : 's are'} scoped by ` +
+        'a parent record**, not by the user — child tables hanging off a detail page. ' +
+        'They need that parent record in context to return anything, so a `0` against ' +
+        'them is expected here and is not a finding. It does mean they cannot be read ' +
+        'by a bare view-based call the way a top-level list can.',
+    );
+    out.push('');
+  }
+
+  // Deliberately list views only. A details view is addressed by record id, so
+  // an unnarrowed source there is not the mass-disclosure case this warns about.
+  const unscoped = plan.targets.filter((t) => !t.scoped);
+  if (unscoped.length > 0) {
+    out.push(
+      `**${unscoped.length} list view${unscoped.length === 1 ? ' narrows' : 's narrow'} nothing** — ` +
+        'not by user, not by criteria, not by a parent record. Whatever the counts above ' +
+        'say, these return the whole object to anyone whose role reaches the page: ' +
+        `${unscoped.map((t) => `\`${t.view}\``).join(', ')}. On a client’s app that is a ` +
+        'finding to report with this evidence attached, not something to fix silently or ' +
+        'to build on top of.',
+    );
+    out.push('');
+  }
 
   const blocked = [...byView.keys()].filter((v) => unreadable(accounts, v));
   if (blocked.length > 0) {
     out.push(
       `**${blocked.length} view${blocked.length === 1 ? '' : 's'} no account could read.** ` +
-        'Either they belong to a role you have not supplied a login for, or they sit on ' +
-        'a child page that needs a parent record in context.',
+        'Either they belong to a role you have not supplied a login for, or Knack refused ' +
+        'the call outright.',
     );
     out.push('');
   }

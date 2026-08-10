@@ -74,7 +74,18 @@ const sourceHasCriteria = (view: KnackViewDef): boolean => {
   return Array.isArray(rules) && rules.length > 0;
 };
 
-const toHarvestedView = (view: KnackViewDef): HarvestedView => {
+/**
+ * Whether the view is narrowed by the record its scene is keyed on.
+ *
+ * A detail scene carries an `object`; a view on it naming a `connection_key`
+ * shows only rows connected to that record. Knack expresses this with neither
+ * `authenticated_user` nor criteria, so it is indistinguishable from a wide
+ * open view unless the scene is consulted — which is why this takes both.
+ */
+export const isParentScoped = (scene: KnackSceneDef, view: KnackViewDef): boolean =>
+  Boolean(scene.object) && Boolean(view.source?.connection_key);
+
+const toHarvestedView = (scene: KnackSceneDef, view: KnackViewDef): HarvestedView => {
   const fields = viewFieldKeys(view);
   const entry: HarvestedView = {
     key: view.key,
@@ -87,6 +98,7 @@ const toHarvestedView = (view: KnackViewDef): HarvestedView => {
   if (fields.length > 0) entry.fields = fields;
   if (view.source?.authenticated_user === true) entry.authenticatedUser = true;
   if (sourceHasCriteria(view)) entry.hasCriteria = true;
+  if (isParentScoped(scene, view)) entry.parentScoped = true;
 
   return entry;
 };
@@ -104,7 +116,7 @@ export const scenesToViews = (scenes: KnackSceneDef[]): HarvestedViews => {
     if (!scene?.key) continue;
 
     const page: HarvestedPage = {
-      views: (scene.views ?? []).filter((v) => v?.key).map(toHarvestedView),
+      views: (scene.views ?? []).filter((v) => v?.key).map((v) => toHarvestedView(scene, v)),
     };
 
     if (scene.slug) page.slug = scene.slug;

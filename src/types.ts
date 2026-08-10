@@ -225,6 +225,8 @@ export interface KnackSceneDef {
   name?: string;
   slug?: string;
   parent?: string | null;
+  /** Set when the scene is keyed on a record — a detail page. See `parentScoped`. */
+  object?: string | null;
   /** Whether the scene requires a logged-in user. */
   authenticated?: boolean | null;
   /** Role profile keys allowed to reach this scene, when restricted. */
@@ -267,6 +269,17 @@ export interface HarvestedView {
   authenticatedUser?: boolean;
   /** Whether the source carries at least one criteria rule. */
   hasCriteria?: boolean;
+  /**
+   * Whether the view is scoped to the record its scene is keyed on.
+   *
+   * A record-detail scene carries an `object`, and a view on it that names a
+   * `connection_key` shows only the rows connected to *that* record — the
+   * child tables on a "recipe details" page, say. Such a view has neither
+   * `authenticated_user` nor criteria and is nonetheless properly narrowed;
+   * counting it as unscoped is a false positive, and an expensive one, because
+   * it pushes real leaks into `allowUnscopedViews` alongside the noise.
+   */
+  parentScoped?: boolean;
 }
 
 export interface HarvestedPage {

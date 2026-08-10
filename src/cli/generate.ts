@@ -191,17 +191,25 @@ const resolveView = (
 /**
  * Whether a view narrows its records at all.
  *
- * `authenticatedUser` means Knack joins the source to the logged-in account;
- * `hasCriteria` means an explicit filter is set. With neither, the view hands
- * back the whole object to every role that can reach the page.
+ * Three ways it can, and missing any one of them produces a false positive:
  *
- * Views harvested by the legacy console snippet carry neither flag, so a
+ * - `authenticatedUser` — Knack joins the source to the logged-in account.
+ * - `hasCriteria` — an explicit filter is set.
+ * - `parentScoped` — the view sits on a record-detail scene and follows a
+ *   connection from that record. Common in migrated apps, where child tables
+ *   hang off a detail page, and invisible in the view's own source.
+ *
+ * With none of the three, the view hands back the whole object to every role
+ * that can reach the page.
+ *
+ * Views harvested by the legacy console snippet carry none of these flags, so a
  * `knack.views.json` predating this check is treated as scoped rather than
  * failing every build with an unanswerable question.
  */
 const isScoped = (view: HarvestedView): boolean =>
   view.authenticatedUser === true ||
   view.hasCriteria === true ||
+  view.parentScoped === true ||
   (view.fields === undefined && view.authenticatedUser === undefined);
 
 const hintFor = (role: ViewRole, objectName: string): string => {

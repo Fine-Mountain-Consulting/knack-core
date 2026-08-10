@@ -22,7 +22,7 @@
 import { KnackError } from '../errors.js';
 import type { KnackSceneDef, KnackViewDef, KnackAppSchema } from '../types.js';
 import type { KnackViewClient } from '../viewClient.js';
-import { viewFieldKeys } from './scenes.js';
+import { isParentScoped, viewFieldKeys } from './scenes.js';
 
 /**
  * View types that answer the collection endpoint.
@@ -50,8 +50,16 @@ export interface CrawlTarget {
   object: string;
   /** Field keys the definition says this view exposes. */
   declaredFields: string[];
-  /** Whether the source is scoped to the logged-in user or carries criteria. */
+  /** Whether the source is narrowed at all — by user, criteria, or parent record. */
   scoped: boolean;
+  /**
+   * Scoped by the record its scene is keyed on, rather than by the user.
+   *
+   * These need a parent record in context to return anything, so an empty
+   * result is expected rather than a finding. Reported separately for that
+   * reason — treating it as a failure would bury the real ones.
+   */
+  parentScoped: boolean;
 }
 
 export interface SkippedView {
@@ -138,6 +146,8 @@ export const planCrawl = (scenes: KnackSceneDef[]): CrawlPlan => {
         continue;
       }
 
+      const parentScoped = isParentScoped(scene, view);
+
       const target: CrawlTarget = {
         scene: scene.key,
         sceneSlug: scene.slug,
@@ -149,7 +159,8 @@ export const planCrawl = (scenes: KnackSceneDef[]): CrawlPlan => {
         viewType: view.type,
         object,
         declaredFields: viewFieldKeys(view),
-        scoped: sourceScoped(view),
+        scoped: sourceScoped(view) || parentScoped,
+        parentScoped,
       };
 
       if (LISTABLE_TYPES.has(view.type)) targets.push(target);
