@@ -621,3 +621,20 @@ test('a single matching list view resolves without a warning', () => {
   });
   assert.equal(result.warnings.filter((w) => w.includes('by position')).length, 0);
 });
+
+test('generated code imports only the types its interfaces use', () => {
+  // The template enables noUnusedLocals, so a fixed import list would make the
+  // generated file fail the consuming app's own typecheck.
+  const result = generate(schema, views, config);
+  const importBlock = result.code.slice(
+    result.code.indexOf('import type {'),
+    result.code.indexOf("} from '@fmc/knack-core';"),
+  );
+
+  // The fixture has a connection field and a multiple-choice field, no dates.
+  assert.match(importBlock, /KnackConnection/);
+  assert.match(importBlock, /KnackViewRef/);
+  assert.doesNotMatch(importBlock, /KnackAddress/);
+  assert.doesNotMatch(importBlock, /KnackPhone/);
+  assert.doesNotMatch(importBlock, /KnackDate/);
+});
