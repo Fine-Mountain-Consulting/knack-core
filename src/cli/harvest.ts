@@ -1,19 +1,28 @@
 #!/usr/bin/env node
 /**
- * Prints the browser snippet that captures scene and view keys.
+ * Writes `knack.views.json` — a pinned snapshot of the app's scenes and views.
  *
- * Knack publishes no REST endpoint for view metadata — the only documented
- * access is the in-browser Knack object API, which exists solely on a
- * Knack-hosted page. So the snippet runs there and hands back JSON.
+ * This is now optional. `knack-sync` reads scenes from the same unauthenticated
+ * loader response as the objects, so a normal build needs no snapshot at all.
+ * Harvest when you want the view map committed and reviewable in a diff, or
+ * when a build has to run without network access.
+ *
+ * `--snippet` prints the old browser-console harvester. Keep it for the case
+ * where the loader is unreachable from your network but a browser is not.
  */
+import { writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { fetchAppSchema } from '../schema.js';
+import { countViews, scenesToViews } from './scenes.js';
 import type { KnackAppConfig } from './config.js';
 
 const c = {
+  red: (s: string) => `\x1b[31m${s}\x1b[0m`,
   cyan: (s: string) => `\x1b[36m${s}\x1b[0m`,
   green: (s: string) => `\x1b[32m${s}\x1b[0m`,
+  yellow: (s: string) => `\x1b[33m${s}\x1b[0m`,
   dim: (s: string) => `\x1b[2m${s}\x1b[0m`,
   bold: (s: string) => `\x1b[1m${s}\x1b[0m`,
 };
@@ -46,42 +55,100 @@ const SNIPPET = `(async () => {
     Object.values(out).reduce((n, p) => n + p.views.length, 0) + ' views.');
 })();`;
 
-const loadViewsFileName = async (cwd: string): Promise<string> => {
+const loadConfig = async (cwd: string): Promise<KnackAppConfig | null> => {
   const candidates = ['knack.config.ts', 'knack.config.js', 'knack.config.mjs'];
   const found = candidates.map((f) => resolve(cwd, f)).find((p) => existsSync(p));
-  if (!found) return 'knack.views.json';
+  if (!found) return null;
   try {
-    const module = (await import(pathToFileURL(found).href)) as { default?: KnackAppConfig };
-    return module.default?.viewsFile ?? 'knack.views.json';
+    const module = (await import(pathToFileURL(found).href)) as {
+      default?: KnackAppConfig;
+      config?: KnackAppConfig;
+    };
+    return module.default ?? module.config ?? null;
   } catch {
-    return 'knack.views.json';
+    return null;
   }
 };
 
-const main = async (): Promise<void> => {
-  const viewsFile = await loadViewsFileName(process.cwd());
-
+const printSnippet = (viewsFile: string): void => {
   console.log(`
-${c.bold('Harvest Knack view keys')}
+${c.bold('Harvest view keys from a browser (fallback)')}
 
-Knack exposes objects and fields over REST, but not scenes and views. Capture
-them from inside the app instead:
+Only needed when this machine cannot reach loader.knack.com. Otherwise just run
+${c.bold('npm run knack:sync')} — it reads scenes directly.
 
-  ${c.bold('1.')} Open the client's ${c.bold('live Knack app')} in a browser and sign in as a Builder.
+  ${c.bold('1.')} Open the client's ${c.bold('live Knack app')} and sign in as a Builder.
   ${c.bold('2.')} Open the console (${c.dim('Cmd+Option+J / Ctrl+Shift+J')}) and paste the snippet below.
   ${c.bold('3.')} Paste your clipboard into ${c.cyan(viewsFile)} and commit it.
-  ${c.bold('4.')} Run ${c.bold('npm run knack:sync')}.
 
 ${c.dim('─'.repeat(72))}
 ${SNIPPET}
 ${c.dim('─'.repeat(72))}
 
-${c.dim('Re-run this whenever views are added or removed — field drift is caught')}
-${c.dim('automatically by knack:sync, but view drift is not.')}
+${c.dim('Note: the snippet cannot report which fields a view exposes or how its')}
+${c.dim('records are scoped, so knack-sync skips those checks for snippet output.')}
 `);
 };
 
+const main = async (): Promise<void> => {
+  const cwd = process.cwd();
+  const config = await loadConfig(cwd);
+  const viewsFile = config?.viewsFile ?? 'knack.views.json';
+
+  if (process.argv.includes('--snippet')) {
+    printSnippet(viewsFile);
+    return;
+  }
+
+  if (!config?.appId) {
+    console.error(
+      `\n${c.red('✖')} No knack.config.ts with an "appId" found in ${cwd}.\n  ` +
+        c.dim('Run `knack-harvest --snippet` for the browser fallback.\n'),
+    );
+    process.exit(1);
+  }
+
+  console.log(c.dim(`Fetching scenes for app ${config.appId}…`));
+
+  const schema = await fetchAppSchema(config.appId).catch((error: unknown) => {
+    console.error(`\n${c.red('✖')} ${error instanceof Error ? error.message : String(error)}\n`);
+    process.exit(1);
+  });
+
+  if (schema.scenes.length === 0) {
+    console.error(
+      `\n${c.red('✖')} The app returned no scenes.\n  ` +
+        c.dim('A brand-new app has none until its first page exists. If the app does have\n  ') +
+        c.dim('pages, run `knack-harvest --snippet` and report this — the payload changed.\n'),
+    );
+    process.exit(1);
+  }
+
+  const views = scenesToViews(schema.scenes);
+  const target = resolve(cwd, viewsFile);
+  await writeFile(target, `${JSON.stringify(views, null, 2)}\n`, 'utf8');
+
+  const unscoped = Object.values(views)
+    .flatMap((page) => page.views)
+    .filter((v) => v.type === 'table' && !v.authenticatedUser && !v.hasCriteria);
+
+  console.log(
+    `${c.green('✔')} Wrote ${c.cyan(viewsFile)} — ` +
+      `${schema.scenes.length} pages, ${countViews(views)} views.`,
+  );
+
+  if (unscoped.length > 0) {
+    console.log(
+      `${c.yellow('!')} ${unscoped.length} table view${unscoped.length === 1 ? '' : 's'} ` +
+        `${unscoped.length === 1 ? 'has' : 'have'} no record scoping ` +
+        c.dim(`(${unscoped.slice(0, 5).map((v) => v.key).join(', ')}${unscoped.length > 5 ? '…' : ''})`) +
+        `\n  ${c.dim('Any role that can reach the page reads every record of the object.')}` +
+        `\n  ${c.dim('knack-sync fails on these when they back a manifest entity.')}`,
+    );
+  }
+};
+
 main().catch((error: unknown) => {
-  console.error(error);
+  console.error(`\n${c.red('✖')} ${error instanceof Error ? error.stack : String(error)}\n`);
   process.exit(1);
 });

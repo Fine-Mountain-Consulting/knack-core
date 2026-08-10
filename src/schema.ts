@@ -1,15 +1,29 @@
 import { KnackError } from './errors.js';
-import type { KnackAppSchema, KnackObjectDef } from './types.js';
+import type {
+  KnackAppSchema,
+  KnackObjectDef,
+  KnackSceneDef,
+} from './types.js';
 
 /**
- * Knack's application loader. This is the endpoint the live Knack app itself
- * fetches, and it needs **no authentication** — which is what lets `knack-sync`
- * run in CI with no secrets configured.
+ * Knack's application loader — the endpoint the live Knack app itself fetches
+ * to boot. It needs **no authentication**, which is what lets `knack-sync` run
+ * in CI with no secrets configured.
  *
- * It returns objects and fields only. There is no `scenes` key, and Knack
- * publishes no REST endpoint for scene/view keys anywhere — those are captured
- * by `knack-harvest` from inside a Knack-hosted page. Don't go looking for an
- * endpoint that doesn't exist.
+ * It returns the whole application definition: `objects` (with fields, types,
+ * options and connections) **and** `scenes` (with their views, each carrying
+ * `source`, `columns`, `inputs`, `links` and `rules`). That is everything the
+ * codegen needs — there is no separate step and no browser involved.
+ *
+ * `https://api.knack.com/v1/applications/{id}` returns a byte-identical
+ * payload, also unauthenticated. Verified 2026-08-10 against a live app; both
+ * hosts, with and without an API key, produced the same 26-key response.
+ *
+ * Two consequences worth internalizing:
+ *   1. An app id is enough to read a Knack app's entire structure. App ids ship
+ *      in the browser bundle, so treat schema shape as public. Security comes
+ *      from Knack's role and record rules, never from obscurity.
+ *   2. Nothing here exposes records. This is structure only.
  */
 export const LOADER_URL = 'https://loader.knack.com/v1/applications';
 
@@ -18,6 +32,7 @@ interface LoaderResponse {
     id?: string;
     name?: string;
     objects?: KnackObjectDef[];
+    scenes?: KnackSceneDef[];
   };
 }
 
@@ -51,5 +66,6 @@ export const fetchAppSchema = async (
     id: app.id ?? appId,
     name: app.name ?? 'Untitled',
     objects: app.objects,
+    scenes: app.scenes ?? [],
   };
 };

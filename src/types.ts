@@ -159,13 +159,93 @@ export interface KnackObjectDef {
   type?: string;
 }
 
+/**
+ * A view's data source. `authenticated_user` is the one that matters for
+ * security: when true, Knack scopes the view's records to the logged-in user
+ * through `connection_key`. When it is absent and `criteria.rules` is empty,
+ * the view returns **every record of the object** to anyone whose role can
+ * reach the page — Knack roles gate the page, not the rows.
+ */
+export interface KnackViewSource {
+  object?: string;
+  authenticated_user?: boolean;
+  connection_key?: string;
+  relationship_type?: string;
+  criteria?: { match?: string; rules?: unknown[]; groups?: unknown[] };
+  sort?: Array<{ field?: string; order?: string }>;
+  limit?: string | number;
+  type?: string;
+}
+
+/** A field reference on a column or input: `{ key }`, or the key itself. */
+export type KnackFieldRef = { key?: string } | string | null | undefined;
+
+/** A column on a table or details view. Grouped layouts nest one level down. */
+export interface KnackViewColumn {
+  field?: KnackFieldRef;
+  header?: string;
+  type?: string;
+  columns?: KnackViewColumn[][];
+}
+
+/** An input on a form view. */
+export interface KnackViewInput {
+  field?: KnackFieldRef;
+  label?: string;
+  type?: string;
+  required?: boolean;
+}
+
+export interface KnackViewDef {
+  key: string;
+  name?: string;
+  type: string;
+  title?: string;
+  action?: string;
+  source?: KnackViewSource;
+  columns?: KnackViewColumn[];
+  inputs?: KnackViewInput[];
+  /**
+   * Form views nest their inputs under groups → columns → inputs. Knack has
+   * shipped more than one nesting depth here, so read these with the tolerant
+   * walker in `cli/scenes.ts` rather than indexing directly.
+   */
+  groups?: Array<{ columns?: Array<{ inputs?: KnackViewInput[] }> }>;
+  links?: unknown[];
+  rules?: Record<string, unknown>;
+  /** Set when the view is restricted to specific role profiles. */
+  allowed_profiles?: string[] | null;
+  limit_profile_access?: boolean | null;
+}
+
+export interface KnackSceneDef {
+  key: string;
+  name?: string;
+  slug?: string;
+  parent?: string | null;
+  /** Whether the scene requires a logged-in user. */
+  authenticated?: boolean | null;
+  /** Role profile keys allowed to reach this scene, when restricted. */
+  authentication_profiles?: string[] | null;
+  allowed_profiles?: string[] | null;
+  limit_profile_access?: boolean | null;
+  modal?: boolean | null;
+  rules?: unknown;
+  views?: KnackViewDef[];
+}
+
 export interface KnackAppSchema {
   id: string;
   name: string;
   objects: KnackObjectDef[];
+  /**
+   * Scenes and their views, from the same unauthenticated response as the
+   * objects. Empty only when reading a truncated or hand-written fixture.
+   */
+  scenes: KnackSceneDef[];
 }
 
-// ── Harvested views (from knack.views.json) ─────────────────────────────────
+// ── Views (derived from the schema, or read from knack.views.json) ──────────
 
 export interface HarvestedView {
   key: string;
@@ -175,11 +255,23 @@ export interface HarvestedView {
   object?: string;
   /** For form views: 'create' | 'update' | 'insert' etc, as Knack reports it. */
   action?: string;
+  /**
+   * Field keys this view actually exposes — table columns or form inputs.
+   * A field absent here is absent from the API response, which is the most
+   * common cause of an unexpected `undefined` in a component.
+   */
+  fields?: string[];
+  /** Whether the source is scoped to the logged-in user. */
+  authenticatedUser?: boolean;
+  /** Whether the source carries at least one criteria rule. */
+  hasCriteria?: boolean;
 }
 
 export interface HarvestedPage {
   slug?: string;
   name?: string;
+  /** Whether the scene requires a logged-in user. */
+  authenticated?: boolean;
   views: HarvestedView[];
 }
 

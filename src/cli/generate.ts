@@ -1,4 +1,5 @@
 import type {
+  HarvestedView,
   HarvestedViews,
   KnackAppSchema,
   KnackFieldDef,
@@ -20,9 +21,34 @@ export interface MissingView {
   hint: string;
 }
 
+/** A view that resolved, but does not expose fields the manifest declares. */
+export interface FieldGap {
+  entity: string;
+  role: ViewRole;
+  view: string;
+  objectName: string;
+  /** Builder field names, so the message is actionable without a key lookup. */
+  missing: string[];
+}
+
+/**
+ * An API view that returns every record of its object to anyone whose role can
+ * reach the page. Knack roles gate page access; rows are narrowed only by a
+ * source connected to the logged-in user or by explicit filter criteria.
+ */
+export interface ScopingFinding {
+  entity: string;
+  role: ViewRole;
+  scene: string;
+  view: string;
+  objectName: string;
+}
+
 export interface GenerateResult {
   code: string;
   missing: MissingView[];
+  fieldGaps: FieldGap[];
+  scoping: ScopingFinding[];
   warnings: string[];
   stats: { objects: number; views: number };
 }
@@ -101,10 +127,12 @@ const findObject = (schema: KnackAppSchema, name: string): KnackObjectDef | unde
 /**
  * Resolve a manifest role to a real view key.
  *
- * Knack does not expose view metadata over REST, so this matches harvested
- * views by source object and view type. Where a form's action is reported
- * (create vs update) it is respected; where it isn't, forms are assigned in
- * document order — hence the ambiguity warning.
+ * Views are matched by source object and view type. Where a form's action is
+ * reported (create vs update) it is respected; where it isn't, forms are
+ * assigned in document order — hence the ambiguity warning.
+ *
+ * The matched view is returned alongside the reference so the caller can audit
+ * what it exposes and how its records are scoped.
  */
 const resolveView = (
   views: HarvestedViews,
@@ -112,7 +140,7 @@ const resolveView = (
   objectKey: string,
   role: ViewRole,
   claimed: Set<string>,
-): { resolved: ResolvedView | null; ambiguous: boolean } => {
+): { resolved: ResolvedView | null; ambiguous: boolean; matched?: HarvestedView } => {
   const pageEntries = Object.entries(views).filter(
     ([sceneKey, page]) =>
       apiPages.length === 0 ||
@@ -121,13 +149,13 @@ const resolveView = (
   );
 
   const acceptable = VIEW_TYPES[role];
-  const candidates: Array<{ scene: string; view: string; action?: string }> = [];
+  const candidates: Array<{ scene: string; view: string; action?: string; def: HarvestedView }> = [];
 
   for (const [sceneKey, page] of pageEntries) {
     for (const view of page.views ?? []) {
       if (view.object !== objectKey) continue;
       if (!acceptable.includes(view.type)) continue;
-      candidates.push({ scene: sceneKey, view: view.key, action: view.action });
+      candidates.push({ scene: sceneKey, view: view.key, action: view.action, def: view });
     }
   }
 
@@ -140,7 +168,11 @@ const resolveView = (
   );
   if (byAction) {
     claimed.add(byAction.view);
-    return { resolved: { scene: byAction.scene, view: byAction.view }, ambiguous: false };
+    return {
+      resolved: { scene: byAction.scene, view: byAction.view },
+      ambiguous: false,
+      matched: byAction.def,
+    };
   }
 
   const unclaimed = candidates.filter((c) => !claimed.has(c.view));
@@ -153,8 +185,24 @@ const resolveView = (
     candidates.length > 1 &&
     candidates.every((c) => !c.action);
 
-  return { resolved: { scene: pick.scene, view: pick.view }, ambiguous };
+  return { resolved: { scene: pick.scene, view: pick.view }, ambiguous, matched: pick.def };
 };
+
+/**
+ * Whether a view narrows its records at all.
+ *
+ * `authenticatedUser` means Knack joins the source to the logged-in account;
+ * `hasCriteria` means an explicit filter is set. With neither, the view hands
+ * back the whole object to every role that can reach the page.
+ *
+ * Views harvested by the legacy console snippet carry neither flag, so a
+ * `knack.views.json` predating this check is treated as scoped rather than
+ * failing every build with an unanswerable question.
+ */
+const isScoped = (view: HarvestedView): boolean =>
+  view.authenticatedUser === true ||
+  view.hasCriteria === true ||
+  (view.fields === undefined && view.authenticatedUser === undefined);
 
 const hintFor = (role: ViewRole, objectName: string): string => {
   switch (role) {
@@ -174,8 +222,11 @@ export const generate = (
   config: KnackAppConfig,
 ): GenerateResult => {
   const missing: MissingView[] = [];
+  const fieldGaps: FieldGap[] = [];
+  const scoping: ScopingFinding[] = [];
   const warnings: string[] = [];
   const claimed = new Set<string>();
+  const allowUnscoped = new Set(config.allowUnscopedViews ?? []);
 
   const objectLines: string[] = [];
   const fieldBlocks: string[] = [];
@@ -236,8 +287,23 @@ export const generate = (
     const viewLines: string[] = [];
     const pages = manifest.pages ?? config.apiPages;
 
+    // Manifest field names -> Knack keys, for the per-view exposure check.
+    const requiredFields = (manifest.fields ?? []).map((name) => {
+      const target = name.trim().toLowerCase();
+      const field = (object.fields ?? []).find(
+        (f) => f.name.trim().toLowerCase() === target || f.key === name.trim(),
+      );
+      if (!field) {
+        warnings.push(
+          `Entity "${entityName}" declares field "${name}", which does not exist on ` +
+            `"${object.name}". Check the spelling against the Builder.`,
+        );
+      }
+      return { name, key: field?.key };
+    });
+
     for (const role of manifest.views) {
-      const { resolved, ambiguous } = resolveView(views, pages, object.key, role, claimed);
+      const { resolved, ambiguous, matched } = resolveView(views, pages, object.key, role, claimed);
       if (!resolved) {
         missing.push({
           entity: entityName,
@@ -251,10 +317,44 @@ export const generate = (
       if (ambiguous) {
         warnings.push(
           `"${entityName}.${role}" resolved to ${resolved.view} by position — the Knack app has ` +
-            `multiple form views for "${object.name}" and the harvest reported no action for ` +
-            `them. Verify it is the right one.`,
+            `multiple form views for "${object.name}" and no action was reported for them. ` +
+            `Verify it is the right one.`,
         );
       }
+
+      // A field left off the view is absent from the API response, not null.
+      if (matched?.fields && requiredFields.length > 0) {
+        const exposed = new Set(matched.fields);
+        const gaps = requiredFields
+          .filter((f) => f.key && !exposed.has(f.key))
+          .map((f) => f.name);
+        if (gaps.length > 0) {
+          fieldGaps.push({
+            entity: entityName,
+            role,
+            view: resolved.view,
+            objectName: object.name,
+            missing: gaps,
+          });
+        }
+      }
+
+      // Reads that return the whole object to every role holding the page.
+      if (
+        matched &&
+        (role === 'list' || role === 'delete') &&
+        !isScoped(matched) &&
+        !allowUnscoped.has(resolved.view)
+      ) {
+        scoping.push({
+          entity: entityName,
+          role,
+          scene: resolved.scene,
+          view: resolved.view,
+          objectName: object.name,
+        });
+      }
+
       viewLines.push(
         `    ${quoteKey(role)}: { scene: '${resolved.scene}', view: '${resolved.view}' },`,
       );
@@ -275,9 +375,8 @@ export const generate = (
 // Source app: ${schema.name} (${schema.id})
 // ${schema.objects.length} objects in the app · ${entities.length} entities mapped · ${viewCount} views resolved
 //
-// Objects and fields come from the Knack loader endpoint. Views come from
-// knack.views.json, captured by \`npm run knack:harvest\` — Knack publishes no
-// REST endpoint for view keys.
+// Objects, fields, scenes and views all come from the Knack loader endpoint,
+// which is unauthenticated — so this regenerates in CI with no secrets.
 
 import type {
   KnackAddress,
@@ -310,6 +409,8 @@ ${interfaces.join('\n\n')}
   return {
     code,
     missing,
+    fieldGaps,
+    scoping,
     warnings,
     stats: { objects: entities.length, views: viewCount },
   };

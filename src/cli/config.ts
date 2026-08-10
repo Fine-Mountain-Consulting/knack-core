@@ -19,6 +19,13 @@ export interface EntityManifestEntry {
   views: ViewRole[];
   /** Restrict view resolution to specific API pages, by slug or key. */
   pages?: string[];
+  /**
+   * Field names — as they appear in the Builder — that the UI reads or writes
+   * for this entity. `knack-sync` checks each resolved view actually exposes
+   * them, because a field left off a view is simply absent from the API
+   * response. Omit to skip the check.
+   */
+  fields?: string[];
 }
 
 export interface KnackAppConfig {
@@ -32,8 +39,21 @@ export interface KnackAppConfig {
   roles?: Record<string, string>;
   /** Where to write the generated schema. Defaults to src/knack/schema.generated.ts */
   outFile?: string;
-  /** Where harvested views live. Defaults to knack.views.json */
+  /**
+   * Offline fallback for scene/view keys. Defaults to knack.views.json.
+   *
+   * Not normally needed: views come from the same unauthenticated response as
+   * the objects. `knack-harvest` writes this file so a build can run without
+   * network access, and it is ignored whenever the live app returns scenes.
+   */
   viewsFile?: string;
+  /**
+   * Allow API views whose source is not scoped to the logged-in user and
+   * carries no filter criteria. Such a view returns every record of its object
+   * to anyone whose role can reach the page — Knack roles gate the page, not
+   * the rows. Set only for genuinely role-wide reference data, and say why.
+   */
+  allowUnscopedViews?: string[];
 }
 
 export const defineKnackConfig = (config: KnackAppConfig): KnackAppConfig => config;
