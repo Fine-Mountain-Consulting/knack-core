@@ -31,6 +31,8 @@ export {
   toPhone,
   toFiles,
   toAddress,
+  mapRecord,
+  mapRecords,
   rawField,
 } from './normalize.js';
 

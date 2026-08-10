@@ -161,3 +161,39 @@ export const rawField = (record: Record<string, unknown>, fieldKey: string): unk
   const raw = record[`${fieldKey}_raw`];
   return raw === undefined ? record[fieldKey] : raw;
 };
+
+/**
+ * Turn a raw Knack record into an entity keyed by friendly names.
+ *
+ * Knack returns `{ id, field_1, field_1_raw, ... }`. The generated interfaces
+ * describe `{ id, recipesName, ... }`. Nothing bridged the two, so a typed
+ * `useKnackList<Recipe>()` produced records whose every property was
+ * `undefined` — the cast compiled and the UI rendered blanks.
+ *
+ * `_raw` is preferred for every field, which is what the generated types
+ * describe: the formatted value is HTML for connection, file, email and link
+ * fields, and rendering it is an XSS vector. `rawField` falls back to the plain
+ * key for short text, where Knack sends no `_raw`.
+ *
+ * Fields absent from the response stay absent rather than becoming `null`, so
+ * "the view does not expose this" reads differently from "this record's value
+ * is empty" — which is the distinction that makes a missing field diagnosable.
+ */
+export const mapRecord = <T>(
+  record: Record<string, unknown>,
+  fieldMap: Record<string, string>,
+): T => {
+  const out: Record<string, unknown> = { id: record.id };
+
+  for (const [name, key] of Object.entries(fieldMap)) {
+    if (!(key in record) && !(`${key}_raw` in record)) continue;
+    out[name] = rawField(record, key);
+  }
+
+  return out as T;
+};
+
+export const mapRecords = <T>(
+  records: Array<Record<string, unknown>>,
+  fieldMap: Record<string, string>,
+): T[] => records.map((record) => mapRecord<T>(record, fieldMap));

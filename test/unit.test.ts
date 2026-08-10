@@ -638,3 +638,45 @@ test('generated code imports only the types its interfaces use', () => {
   assert.doesNotMatch(importBlock, /KnackPhone/);
   assert.doesNotMatch(importBlock, /KnackDate/);
 });
+
+// ── Record mapping ──────────────────────────────────────────────────────────
+
+test('raw Knack records map onto friendly names, preferring _raw', async () => {
+  const { mapRecord } = await import('../dist/index.js');
+  const mapped = mapRecord<Record<string, unknown>>(
+    {
+      id: 'rec1',
+      field_12: 'Ada',
+      field_31: '<span>Acme</span>',                       // formatted: HTML
+      field_31_raw: [{ id: 'c1', identifier: 'Acme' }],    // raw: structured
+      field_15: 'a@b.c',
+    },
+    { firstName: 'field_12', company: 'field_31', email: 'field_15' },
+  );
+
+  assert.equal(mapped.id, 'rec1');
+  assert.equal(mapped.firstName, 'Ada');
+  assert.equal(mapped.email, 'a@b.c');
+  // _raw wins — the formatted form is HTML and rendering it is an XSS vector.
+  assert.deepEqual(mapped.company, [{ id: 'c1', identifier: 'Acme' }]);
+});
+
+test('a field the view does not expose stays absent rather than becoming null', async () => {
+  const { mapRecord } = await import('../dist/index.js');
+  const mapped = mapRecord<Record<string, unknown>>({ id: 'r', field_12: 'Ada' }, {
+    firstName: 'field_12',
+    status: 'field_18',
+  });
+
+  // "the view omits this field" must read differently from "the value is empty",
+  // or a missing field is undiagnosable.
+  assert.equal('status' in mapped, false);
+  assert.equal(mapped.firstName, 'Ada');
+});
+
+test('codegen emits a typed mapper per entity', () => {
+  const result = generate(schema, views, config);
+  assert.match(result.code, /export const toContact = \(record: KnackRawRecord\): Contact =>/);
+  assert.match(result.code, /mapRecord<Contact>\(record, FIELDS\.contacts\)/);
+  assert.match(result.code, /import \{ mapRecord \} from '@fmc\/knack-core';/);
+});
