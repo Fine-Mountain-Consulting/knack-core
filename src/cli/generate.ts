@@ -134,13 +134,27 @@ const findObject = (schema: KnackAppSchema, name: string): KnackObjectDef | unde
  * The matched view is returned alongside the reference so the caller can audit
  * what it exposes and how its records are scoped.
  */
+/** How a view narrows its records, in words, for a warning a human must act on. */
+const scopeLabel = (view: HarvestedView): string => {
+  if (view.authenticatedUser === true) return 'the logged-in user';
+  if (view.parentScoped === true) return 'a parent record';
+  if (view.hasCriteria === true) return 'filter criteria';
+  return 'nothing';
+};
+
 const resolveView = (
   views: HarvestedViews,
   apiPages: string[],
   objectKey: string,
   role: ViewRole,
   claimed: Set<string>,
-): { resolved: ResolvedView | null; ambiguous: boolean; matched?: HarvestedView } => {
+): {
+  resolved: ResolvedView | null;
+  ambiguous: boolean;
+  matched?: HarvestedView;
+  /** Other views that matched. Populated only when the pick was by position. */
+  alternatives?: Array<{ scene: string; view: string; scope: string }>;
+} => {
   const pageEntries = Object.entries(views).filter(
     ([sceneKey, page]) =>
       apiPages.length === 0 ||
@@ -185,7 +199,27 @@ const resolveView = (
     candidates.length > 1 &&
     candidates.every((c) => !c.action);
 
-  return { resolved: { scene: pick.scene, view: pick.view }, ambiguous, matched: pick.def };
+  /*
+   * A read role with more than one candidate was also decided by position, and
+   * that decision is invisible in the generated output. It matters most when
+   * the candidates are scoped differently — an object listed both at top level
+   * (scoped to the user) and as a child table (scoped to a parent record) is
+   * ordinary in a migrated app, and picking the wrong one yields a page that
+   * silently returns nothing outside its parent's context.
+   */
+  const alternatives =
+    (role === 'list' || role === 'delete') && candidates.length > 1
+      ? candidates
+          .filter((c) => c.view !== pick.view)
+          .map((c) => ({ scene: c.scene, view: c.view, scope: scopeLabel(c.def) }))
+      : undefined;
+
+  return {
+    resolved: { scene: pick.scene, view: pick.view },
+    ambiguous,
+    matched: pick.def,
+    ...(alternatives && alternatives.length > 0 ? { alternatives } : {}),
+  };
 };
 
 /**
@@ -311,7 +345,13 @@ export const generate = (
     });
 
     for (const role of manifest.views) {
-      const { resolved, ambiguous, matched } = resolveView(views, pages, object.key, role, claimed);
+      const { resolved, ambiguous, matched, alternatives } = resolveView(
+        views,
+        pages,
+        object.key,
+        role,
+        claimed,
+      );
       if (!resolved) {
         missing.push({
           entity: entityName,
@@ -327,6 +367,16 @@ export const generate = (
           `"${entityName}.${role}" resolved to ${resolved.view} by position — the Knack app has ` +
             `multiple form views for "${object.name}" and no action was reported for them. ` +
             `Verify it is the right one.`,
+        );
+      }
+
+      if (alternatives) {
+        warnings.push(
+          `"${entityName}.${role}" resolved to ${resolved.view} (scoped by ` +
+            `${matched ? scopeLabel(matched) : 'nothing'}) by position. "${object.name}" also has ` +
+            alternatives.map((a) => `${a.view} on ${a.scene} (scoped by ${a.scope})`).join(', ') +
+            `. Pin the intended one with \`pages\` on the "${entityName}" manifest entry — ` +
+            `views scoped differently return different records.`,
         );
       }
 

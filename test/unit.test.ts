@@ -549,3 +549,75 @@ test('a top-level view with a connection but no scene record is still unscoped',
   assert.equal(scenesToViews(flat).scene_2!.views[0]!.parentScoped, undefined);
   assert.equal(planCrawl(flat).targets[0]!.scoped, false);
 });
+
+test('a list view chosen by position among differently-scoped candidates warns', () => {
+  // The migrated-app case: one object listed both at top level (scoped to the
+  // user) and as a child table (scoped to a parent record). Picking silently
+  // yields a page that returns nothing outside its parent's context.
+  const twoWays: KnackSceneDef[] = [
+    {
+      key: 'scene_30',
+      slug: 'brewlogs',
+      authenticated: true,
+      views: [
+        {
+          key: 'view_65',
+          type: 'table',
+          source: { object: 'object_3', authenticated_user: true, connection_key: 'field_12' },
+          columns: [{ field: { key: 'field_12' } }],
+        },
+      ],
+    },
+    {
+      key: 'scene_8',
+      slug: 'recipedetails',
+      object: 'object_1',
+      authenticated: true,
+      views: [
+        {
+          key: 'view_34',
+          type: 'table',
+          source: { object: 'object_3', connection_key: 'field_49' },
+          columns: [{ field: { key: 'field_12' } }],
+        },
+      ],
+    },
+  ];
+
+  const result = generate({ ...schema, scenes: twoWays }, scenesToViews(twoWays), {
+    appId: 'app1',
+    apiPages: ['brewlogs', 'recipedetails'],
+    entities: { contacts: { object: 'Contacts', views: ['list'] } },
+  });
+
+  const warning = result.warnings.find((w) => w.includes('by position'));
+  assert.ok(warning, 'expected a positional-resolution warning');
+  assert.match(warning!, /view_34/);
+  assert.match(warning!, /a parent record/);
+  assert.match(warning!, /the logged-in user/);
+  assert.match(warning!, /`pages`/);
+});
+
+test('a single matching list view resolves without a warning', () => {
+  const one: KnackSceneDef[] = [
+    {
+      key: 'scene_30',
+      slug: 'brewlogs',
+      authenticated: true,
+      views: [
+        {
+          key: 'view_65',
+          type: 'table',
+          source: { object: 'object_3', authenticated_user: true },
+          columns: [{ field: { key: 'field_12' } }],
+        },
+      ],
+    },
+  ];
+  const result = generate({ ...schema, scenes: one }, scenesToViews(one), {
+    appId: 'app1',
+    apiPages: ['brewlogs'],
+    entities: { contacts: { object: 'Contacts', views: ['list'] } },
+  });
+  assert.equal(result.warnings.filter((w) => w.includes('by position')).length, 0);
+});
