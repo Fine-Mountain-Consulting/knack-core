@@ -29,7 +29,8 @@
   },
   "bin": {
     "knack-sync": "./dist/cli/sync.js",
-    "knack-harvest": "./dist/cli/harvest.js"
+    "knack-harvest": "./dist/cli/harvest.js",
+    "knack-crawl": "./dist/cli/crawl.js"
   },
   "scripts": {
     "build": "tsup",

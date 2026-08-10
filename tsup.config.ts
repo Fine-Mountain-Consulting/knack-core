@@ -8,6 +8,7 @@ export default defineConfig({
     'cli/index': 'src/cli/index.ts',
     'cli/sync': 'src/cli/sync.ts',
     'cli/harvest': 'src/cli/harvest.ts',
+    'cli/crawl': 'src/cli/crawl.ts',
   },
   format: ['esm'],
   dts: true,

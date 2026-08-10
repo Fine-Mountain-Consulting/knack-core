@@ -154,7 +154,9 @@ export interface KnackObjectDef {
   name: string;
   fields: KnackFieldDef[];
   identifier?: string;
-  /** Present on user-role objects. */
+  /** True on user-role objects — the Accounts table and each role table. */
+  user?: boolean;
+  /** Present on user-role objects. Maps to a login's `allowed_profiles`. */
   profile_key?: string;
   type?: string;
 }

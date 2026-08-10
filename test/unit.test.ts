@@ -12,6 +12,7 @@ import {
 } from '../dist/index.js';
 import { singularize, toCamelCase, toPascalCase, uniquify } from '../dist/cli/index.js';
 import { generate, scenesToViews, viewFieldKeys } from '../dist/cli/index.js';
+import { objectCoverage, planCrawl, recordFieldKeys, uncoveredProfiles } from '../dist/cli/index.js';
 import type { KnackAppSchema, HarvestedViews, KnackSceneDef } from '../dist/index.js';
 import type { KnackAppConfig } from '../dist/cli/index.js';
 
@@ -381,4 +382,114 @@ test('views from the legacy console snippet are not failed for scoping', () => {
   const result = generate(schema, views, config);
   assert.equal(result.scoping.length, 0);
   assert.equal(result.fieldGaps.length, 0);
+});
+
+// ── Crawl planning and coverage ─────────────────────────────────────────────
+
+const crawlScenes: KnackSceneDef[] = [
+  {
+    key: 'scene_9',
+    slug: 'contacts',
+    authenticated: true,
+    views: [
+      {
+        key: 'view_44',
+        type: 'table',
+        source: { object: 'object_3', authenticated_user: true, connection_key: 'field_31' },
+        columns: [{ field: { key: 'field_12' } }, { field: { key: 'field_15' } }],
+      },
+      {
+        key: 'view_70',
+        type: 'details',
+        source: { object: 'object_3' },
+        columns: [{ field: { key: 'field_12' } }, { field: { key: 'field_18' } }],
+      },
+      { key: 'view_45', type: 'form', action: 'insert', source: { object: 'object_3' }, inputs: [] },
+      { key: 'view_99', type: 'menu' },
+    ],
+  },
+];
+
+test('crawl planning splits listable, detail and skipped views', () => {
+  const plan = planCrawl(crawlScenes);
+
+  assert.deepEqual(plan.targets.map((t) => t.view), ['view_44']);
+  assert.deepEqual(plan.details.map((t) => t.view), ['view_70']);
+
+  // A form is never crawled — a write against a live app fires its record
+  // rules — but it stays in the plan, because it is still API surface.
+  assert.deepEqual(plan.writeViews.map((t) => t.view), ['view_45']);
+
+  // A sourceless view is still accounted for, never silently dropped.
+  const menu = plan.skipped.find((s) => s.view === 'view_99')!;
+  assert.equal(menu.reason, 'no-source-object');
+
+  assert.equal(plan.targets[0]!.scoped, true);
+  assert.deepEqual(plan.targets[0]!.declaredFields, ['field_12', 'field_15']);
+});
+
+test('record field keys collapse _raw duplicates and ignore non-field keys', () => {
+  assert.deepEqual(
+    recordFieldKeys([
+      { id: 'abc', field_12: 'Ada', field_12_raw: 'Ada', field_15: 'a@b.c' },
+      { id: 'def', field_31: [{ id: '1', identifier: 'Acme' }] },
+    ]),
+    ['field_12', 'field_15', 'field_31'],
+  );
+  assert.deepEqual(recordFieldKeys([]), []);
+});
+
+test('coverage separates what a view declares from what a request returned', () => {
+  const plan = planCrawl(crawlScenes);
+  const accounts = [
+    {
+      label: 'user',
+      email: 'u@example.com',
+      userId: 'u1',
+      profileKeys: ['profile_19'],
+      attempts: [
+        {
+          scene: 'scene_9',
+          view: 'view_44',
+          viewType: 'table',
+          object: 'object_3',
+          status: 'ok' as const,
+          totalRecords: 2,
+          sampled: 2,
+          // field_15 is configured on the view but never came back.
+          fields: ['field_12'],
+          absent: ['field_15'],
+          undeclared: [],
+        },
+      ],
+    },
+  ];
+
+  const [contacts] = objectCoverage({ ...schema, scenes: crawlScenes }, plan, accounts);
+
+  assert.equal(contacts!.totalFields, 4);
+  // Readable views (table + details) expose 12, 15, 18.
+  assert.equal(contacts!.declaredRead, 3);
+  // The add form contributes no inputs in this fixture, so all-views matches.
+  assert.equal(contacts!.declaredAll, 3);
+  assert.equal(contacts!.observed, 1);
+  assert.ok(contacts!.unreached.includes('field_15'));
+  assert.equal(contacts!.reachable, true);
+});
+
+test('roles with no supplied login are named rather than assumed empty', () => {
+  const roleSchema: KnackAppSchema = {
+    ...schema,
+    objects: [
+      ...schema.objects,
+      { key: 'object_19', name: 'User', user: true, profile_key: 'profile_19', fields: [] },
+      { key: 'object_20', name: 'Admin', user: true, profile_key: 'profile_20', fields: [] },
+    ],
+  };
+
+  const uncovered = uncoveredProfiles(roleSchema, [
+    { label: 'user', email: 'u@e.c', userId: 'u1', profileKeys: ['profile_19'], attempts: [] },
+  ]);
+
+  assert.deepEqual(uncovered, [{ profileKey: 'profile_20', name: 'Admin' }]);
 });

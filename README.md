@@ -53,14 +53,28 @@ save.mutate({ action: 'create', data: { [FIELDS.contacts.firstName]: 'Jane' } })
 ## Codegen
 
 ```bash
-npx knack-harvest   # prints the browser snippet that captures view keys
-npx knack-sync      # generates src/knack/schema.generated.ts
+npx knack-sync           # generates src/knack/schema.generated.ts
 npx knack-sync --check   # CI: fails if the committed schema is stale
+npx knack-harvest        # optional: pins the view map to knack.views.json
 ```
 
-Objects and fields come from `loader.knack.com/v1/applications/{app_id}`, which needs **no authentication** — so `--check` runs on every PR with no secrets configured.
+Objects, fields, **scenes and views** all come from `loader.knack.com/v1/applications/{app_id}`, which needs **no authentication** — so `--check` runs on every PR with no secrets configured. Each view arrives with its `source`, `columns` and `inputs`, which is what lets sync check field exposure and record scoping at build time rather than leaving them as runtime surprises.
 
-Views are a different story. Knack publishes no REST endpoint for scene/view keys; the only documented access is the in-browser `Knack.getPages()` / `Knack.getViews()` API on a Knack-hosted page. `knack-harvest` prints a snippet for that, and its output lives in a committed `knack.views.json`. Don't go looking for an endpoint — there isn't one.
+`knack-harvest` is now only for pinning that map into a committed file, or building without network access. Its `--snippet` mode prints the old browser-console harvester for networks that can't reach the loader; that output carries no `source` or `columns`, so the two checks above are skipped for it.
+
+## Crawling an existing app
+
+```bash
+npx knack-crawl --help
+npx knack-crawl                 # one login per role, from .knack-crawl.json
+npx knack-crawl --values        # include real record values (client data — handle with care)
+```
+
+For migration work, where you have an app id and user logins but no Builder access. An existing Knack app already *is* an API: every table, list and search view its users navigate answers `GET /pages/{scene}/views/{view}/records`, and every request is made as a genuine logged-in user, so Knack keeps enforcing roles and record rules throughout.
+
+The crawl reports what the definition can't: which roles actually saw which views, which returned no rows, and which fields a view promises but never delivers. **GET only** — a write against a live app fires its record rules.
+
+Coverage is reported three ways, because conflating them misleads: fields on *any* existing view (the surface a migration could use, forms included), fields on a *readable* view (what a crawl may safely call), and fields *observed* in a real response.
 
 `knack.config.ts`:
 

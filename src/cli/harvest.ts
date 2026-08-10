@@ -11,21 +11,11 @@
  * where the loader is unreachable from your network but a browser is not.
  */
 import { writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { fetchAppSchema } from '../schema.js';
+import { loadConfigOptional } from './loadConfig.js';
 import { countViews, scenesToViews } from './scenes.js';
-import type { KnackAppConfig } from './config.js';
-
-const c = {
-  red: (s: string) => `\x1b[31m${s}\x1b[0m`,
-  cyan: (s: string) => `\x1b[36m${s}\x1b[0m`,
-  green: (s: string) => `\x1b[32m${s}\x1b[0m`,
-  yellow: (s: string) => `\x1b[33m${s}\x1b[0m`,
-  dim: (s: string) => `\x1b[2m${s}\x1b[0m`,
-  bold: (s: string) => `\x1b[1m${s}\x1b[0m`,
-};
+import { c } from './term.js';
 
 const SNIPPET = `(async () => {
   if (typeof Knack === 'undefined' || !Knack.getPages) {
@@ -55,21 +45,6 @@ const SNIPPET = `(async () => {
     Object.values(out).reduce((n, p) => n + p.views.length, 0) + ' views.');
 })();`;
 
-const loadConfig = async (cwd: string): Promise<KnackAppConfig | null> => {
-  const candidates = ['knack.config.ts', 'knack.config.js', 'knack.config.mjs'];
-  const found = candidates.map((f) => resolve(cwd, f)).find((p) => existsSync(p));
-  if (!found) return null;
-  try {
-    const module = (await import(pathToFileURL(found).href)) as {
-      default?: KnackAppConfig;
-      config?: KnackAppConfig;
-    };
-    return module.default ?? module.config ?? null;
-  } catch {
-    return null;
-  }
-};
-
 const printSnippet = (viewsFile: string): void => {
   console.log(`
 ${c.bold('Harvest view keys from a browser (fallback)')}
@@ -92,7 +67,7 @@ ${c.dim('records are scoped, so knack-sync skips those checks for snippet output
 
 const main = async (): Promise<void> => {
   const cwd = process.cwd();
-  const config = await loadConfig(cwd);
+  const config = await loadConfigOptional(cwd);
   const viewsFile = config?.viewsFile ?? 'knack.views.json';
 
   if (process.argv.includes('--snippet')) {
