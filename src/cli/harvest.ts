@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env -S node --experimental-strip-types
 /**
  * Writes `knack.views.json` — a pinned snapshot of the app's scenes and views.
  *

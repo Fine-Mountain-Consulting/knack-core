@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env -S node --experimental-strip-types
 /**
  * `knack-crawl` — read a Knack app as its own users, and report what came back.
  *

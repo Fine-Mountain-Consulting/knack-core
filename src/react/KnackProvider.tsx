@@ -29,7 +29,9 @@ const KnackContext = createContext<KnackContextValue<string> | null>(null);
 
 export interface KnackProviderProps<R extends string = string> {
   appId: string;
-  /** Maps Knack profile keys (`object_5`) to app role names (`admin`). */
+  /** Maps Knack profile keys (`profile_5`) to app role names (`admin`).
+   *  Profile keys, not object keys — a role object carries both and only
+   *  `profile_key` appears in the session response. */
   roleMap: Record<string, R>;
   /** Override for GovCloud/HIPAA tenants. */
   apiHost?: string;

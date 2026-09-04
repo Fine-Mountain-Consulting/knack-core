@@ -88,7 +88,8 @@ export default defineKnackConfig({
     contacts: { object: 'Contacts', views: ['list', 'create', 'update'] },
     companies: { object: 'Companies', views: ['list'] },
   },
-  roles: { object_5: 'admin', object_6: 'customer' },
+  // Profile keys, not object keys — only profile_key appears in the session response.
+  roles: { profile_5: 'admin', profile_6: 'customer' },
 });
 ```
 

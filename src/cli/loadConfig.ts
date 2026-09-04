@@ -13,7 +13,19 @@ const CANDIDATES = ['knack.config.ts', 'knack.config.js', 'knack.config.mjs'];
  * natively from v23.6. Consuming apps are on Node 22+, so we import the .ts
  * and fall back to a .js/.mjs sibling if type stripping is unavailable.
  */
+/**
+ * `knack.config.ts` reads `process.env.VITE_KNACK_APP_ID`, but nothing else
+ * puts it there for a plain `node` invocation — Vite's own `.env` loading
+ * only applies inside the browser build. Load it here, once, before the
+ * config file is imported and reads it.
+ */
+const loadDotEnv = (cwd: string): void => {
+  const envFile = resolve(cwd, '.env');
+  if (existsSync(envFile)) process.loadEnvFile(envFile);
+};
+
 export const loadConfig = async (cwd: string): Promise<KnackAppConfig> => {
+  loadDotEnv(cwd);
   const found = CANDIDATES.map((f) => resolve(cwd, f)).find((p) => existsSync(p));
 
   if (!found) {
@@ -53,6 +65,7 @@ export const loadConfig = async (cwd: string): Promise<KnackAppConfig> => {
 
 /** Same, but tolerant: returns null instead of exiting when there is no config. */
 export const loadConfigOptional = async (cwd: string): Promise<KnackAppConfig | null> => {
+  loadDotEnv(cwd);
   const found = CANDIDATES.map((f) => resolve(cwd, f)).find((p) => existsSync(p));
   if (!found) return null;
   try {
