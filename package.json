@@ -1,6 +1,6 @@
 {
   "name": "@fmc/knack-core",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Knack data layer for custom front ends: view-based client, auth, and schema codegen.",
   "license": "UNLICENSED",
   "private": true,
